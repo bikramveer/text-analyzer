@@ -1,43 +1,10 @@
 # text-analyzer
 
-A REST API and web UI that uses an AI model to summarize text and extract action items, returning structured JSON. Built with Express and TypeScript.
+A REST API with a web UI that uses an AI model to summarize text and extract action items from it, returning the results as structured JSON. Built with Express and TypeScript.
 
-The codebase is structured to support both **Google Gemini** and **Anthropic Claude** — commented sections in `index.ts` show both implementations side by side, making it easy to swap providers by uncommenting the relevant block.
+**Live demo:** [text-analyzer-tbs.vercel.app](https://text-analyzer-tbs.vercel.app)
 
-## Setup
-
-```bash
-git clone https://github.com/YOUR_USERNAME/text-analyzer.git
-cd text-analyzer
-npm install
-cp .env.example .env  # add your GEMINI_API_KEY or ANTHROPIC_API_KEY
-npm run dev
-```
-
-Then open `http://localhost:3000` in your browser to use the web UI, or send requests directly to the API.
-
-Get a free Gemini API key (no credit card) at [aistudio.google.com](https://aistudio.google.com).
-
-## API Usage
-
-```bash
-curl -X POST http://localhost:3000/analyze \
-  -H "Content-Type: application/json" \
-  -d '{"text": "The Q3 roadmap review was held on Monday. The team agreed to prioritize the mobile checkout flow, defer the analytics dashboard to Q4, and schedule a follow-up with the design team by Friday. Engineering flagged a dependency on the payments API that needs to be resolved before development can start."}'
-```
-
-**Response:**
-
-```json
-{
-  "summary": "The team held a Q3 roadmap review and agreed to prioritize the mobile checkout flow while deferring the analytics dashboard to Q4. A follow-up with the design team is planned for Friday. Engineering identified a payments API dependency that must be resolved before development begins.",
-  "action_items": [
-    "Prioritize mobile checkout flow development for Q3 delivery",
-    "Schedule follow-up meeting with the design team before Friday",
-    "Resolve payments API dependency before engineering begins development"
-  ]
-}
-```
+The app is deployed on Vercel and running with my Google Gemini API key, so you can test it directly without any setup.
 
 ---
 
@@ -45,15 +12,15 @@ curl -X POST http://localhost:3000/analyze \
 
 ### What I built
 
-A single-endpoint REST API (`POST /analyze`) that accepts a JSON body with a `text` field and returns a structured object with a 2–3 sentence summary and exactly three action items. Built with Express and TypeScript, with Google Gemini as the active AI provider.
+A single endpoint REST API that accepts a block of text and returns a summary and three action items as JSON. I also built a simple web UI on top of it so you can test it in the browser without needing Postman or curl. The UI sends the same POST request under the hood and renders the response in a readable way.
 
-I also built a small web UI served from `public/index.html` — partly because I'm more comfortable validating functionality through a real interface than raw API calls, and partly because it makes the tool immediately usable without Postman or curl. The UI sends the same `POST /analyze` request under the hood and renders the structured response visually.
+I kept the codebase simple on purpose. One route, one model call, no database. The goal was to show how I think about structuring a small project and how I approach working with AI APIs, not to over-engineer something that didn't need it.
 
-The `index.ts` file includes both the Gemini and Claude implementations as commented parallel sections, documenting how the two providers differ in their SDK design — Gemini uses a single `generateContent` call with a `responseSchema` config, while Claude separates the system prompt from the user message and relies on prompt instructions to constrain output format.
+The index.ts file also includes the Anthropic Claude implementation as commented out code alongside the active Gemini version. I wanted to show how the two providers compare since I explored both during the build. The main difference is that Gemini lets you pass a responseSchema directly in the API config to enforce the JSON structure, while with Claude you have to handle that through the prompt itself.
 
 ### The prompts I used
 
-**Gemini** — a single prompt template combining instructions and input text, with the output schema enforced at the API level via `responseSchema` in `generationConfig`:
+For Gemini I used a single prompt template that combines the instructions and the input text together. Because Gemini supports responseSchema in the generation config, the prompt only needs to describe what the content should look like rather than worry about output formatting.
 
 ```
 You are a text analysis assistant. Extract insights from the following text.
@@ -68,28 +35,20 @@ TEXT TO ANALYZE:
 "[input text]"
 ```
 
-**Claude** (commented alternative) — a separate system prompt with stricter format instructions, since Claude doesn't use `responseSchema`:
-
-```
-You are a text analysis assistant. When given a block of text, you must respond
-with ONLY valid JSON — no markdown, no explanation, no preamble...
-```
-
-The key difference: with Gemini, `responseSchema` enforces the JSON structure at the generation level, so the prompt can focus purely on content goals. With Claude, the prompt itself carries the formatting burden, requiring explicit rules like "no ```json fences" and "raw JSON only."
+For the Claude version I used a separate system prompt with stricter formatting instructions since Claude does not have a responseSchema equivalent. I had to explicitly tell it to return raw JSON with no markdown fences and define the exact structure I wanted inside the prompt.
 
 ### What didn't work at first and how I adjusted
 
-- **Markdown-wrapped JSON** — without `responseSchema`, both models wrapped responses in ```json fences. For Gemini, setting `responseMimeType: "application/json"` and `responseSchema` solved this at the API level. For the Claude version, I added explicit prompt rules ("raw JSON only, no fences") plus a `JSON.parse()` call as a validation gate.
+The first thing I ran into was that both models would wrap their JSON responses in markdown code fences by default. For Gemini I fixed this by setting responseMimeType to application/json and adding a responseSchema in the generation config, which enforces the output format at the API level. For the Claude version I added explicit instructions in the prompt like "raw JSON only, no fences" and kept a JSON.parse call to catch anything malformed.
 
-- **Inconsistent action item count** — early iterations returned 2 or 4 items depending on input length. Adding "exactly 3 items" and a fallback rule ("infer next steps if fewer than 3 are explicit") made the count consistent across both providers.
+The second issue was inconsistent action item counts. Sometimes the model would return two items, sometimes four, depending on how much content was in the input. Adding "exactly 3 items" and a fallback instruction to infer next steps when the text does not have enough clear tasks fixed this.
 
-- **Vague action items** — without the imperative verb constraint, items read as observations rather than tasks (e.g. "The team should consider the payments dependency" vs. "Resolve payments API dependency before development begins"). The grammar rule fixed this.
-
-- **API billing issues** — the Anthropic API requires an active billing method before the `/v1/messages` endpoint works, even with credits loaded. The `/v1/models` endpoint returns 200 without billing, which made this tricky to debug. Switching to Gemini's free tier unblocked development, which is why both implementations are preserved in the code.
+I also ran into billing issues with the Anthropic API. Even after adding credits the messages endpoint kept returning a credit balance error, while the models endpoint worked fine. I spent time debugging this before switching to Gemini's free tier to unblock myself. I kept both implementations in the code since I had already built both.
 
 ### What I would improve with more time
 
-- **Provider toggle via environment variable** — since both implementations exist in the codebase, a clean next step would be a `MODEL_PROVIDER=gemini|claude` env flag that switches the active client at startup, rather than commenting/uncommenting code.
-- **Input length capping** — currently validates for empty input but doesn't enforce a max character count. Long inputs should be truncated or chunked before hitting the model.
-- **Tests** — at minimum, a happy-path integration test and a test for malformed input, with the AI client mocked for deterministic results.
-- **Configurable output** — allowing callers to specify action item count or summary length via query params would make the API more flexible without meaningful added complexity.
+Right now switching between Claude and Gemini means manually commenting and uncommenting code. A cleaner version would read a MODEL_PROVIDER environment variable at startup and pick the right client automatically.
+
+I also want to add proper tests. At minimum a happy path test and a test for bad input, with the AI client mocked so the tests run fast and do not depend on a live API.
+
+The input currently has a character limit on the frontend but no server side length validation. A production version would enforce that on the API side too and handle chunking for longer documents.
